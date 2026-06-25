@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Red stripe (top third) -->
+    <path
+        android:fillColor="#ED1C24"
+        android:pathData="M0,0h108v36h-108z" />
+
+    <!-- White stripe (middle third) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M0,36h108v36h-108z" />
+
+    <!-- Green stripe (bottom third) -->
+    <path
+        android:fillColor="#009639"
+        android:pathData="M0,72h108v36h-108z" />
+
+    <!-- Golden sun disc at center -->
+    <path
+        android:fillColor="#FDB913"
+        android:pathData="M54,54 m-12,0 a12,12 0 1,1 24,0 a12,12 0 1,1 -24,0" />
+
+    <!-- Outer sun ring for better visibility -->
+    <path
+        android:fillColor="#FDB913"
+        android:pathData="M54,54 m-15,0 a15,15 0 1,1 30,0 a15,15 0 1,1 -30,0"
+        android:strokeWidth="2"
+        android:strokeColor="#FDB913" />
+
+    <!-- 21 sun rays radiating from center (54,54) -->
+    <path
+        android:fillColor="#FDB913"
+        android:pathData="
+            M54,10 L55,32 L56,10Z
+            M54,98 L55,76 L56,98Z
+            M12,54 L32,55 L12,56Z
+            M96,54 L76,55 L96,56Z
+            M21,21 L36,36 L33,18Z
+            M87,21 L72,36 L75,18Z
+            M21,87 L36,72 L33,90Z
+            M87,87 L72,72 L75,90Z
+            M30,14 L40,32 L42,14Z
+            M78,14 L68,32 L66,14Z
+            M30,94 L40,76 L42,94Z
+            M78,94 L68,76 L66,94Z
+            M40,8 L46,32 L48,8 L52,32 L56,8 L54,32 L62,8Z
+            M40,100 L46,76 L48,100 L52,76 L56,100 L54,76 L62,100Z
+            M13,40 L32,44 L26,36Z
+            M13,68 L32,64 L26,72Z
+            M95,40 L76,44 L82,36Z
+            M95,68 L76,64 L82,72Z
+            M18,46 L34,48 L26,42Z
+            M90,46 L74,48 L82,42Z
+            M54,6 L55,32 L56,10Z
+        " />
+</vector>

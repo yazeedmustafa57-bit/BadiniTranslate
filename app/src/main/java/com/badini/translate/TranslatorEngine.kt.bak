@@ -1,0 +1,1236 @@
+package com.badini.translate
+
+import android.content.ContentResolver
+import android.graphics.Bitmap
+import android.net.Uri
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
+
+object TranslatorEngine {
+
+    /** User-provided Gemini API key (set from settings) */
+    var userGeminiKey: String? = null
+
+    /** Proxy URL (set from settings, like the website) */
+    var proxyUrl: String = "https://translator-site-ef3eqizd6-yazeedmustafa57-7755s-projects.vercel.app"
+
+    /** User-provided Badini API key for proxy */
+    var userBadiniKey: String? = null
+
+    /** Tracks which services were attempted and what error occurred */
+    private val _lastTranslationErrors = mutableListOf<String>()
+    val lastTranslationErrors: List<String> get() = _lastTranslationErrors.toList()
+
+    /** Standard-Gemini-Keys (alle aufgebraucht – eigenen Key in Einstellungen hinterlegen) */
+    private val defaultGeminiKeys = emptyList<String>()
+    private val allGeminiKeys: List<String>
+        get() {
+            val keys = defaultGeminiKeys.toMutableList()
+            userGeminiKey?.let { if (it.isNotBlank()) keys.add(0, it) }
+            return keys
+        }
+
+    private val languageNames = mapOf(
+        "en" to "English", "ar" to "Arabic", "tr" to "Turkish",
+        "fa" to "Persian", "fr" to "French", "de" to "German",
+        "es" to "Spanish", "ru" to "Russian", "sv" to "Swedish",
+        "it" to "Italian", "pt" to "Portuguese", "nl" to "Dutch",
+        "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese",
+        "hi" to "Hindi", "el" to "Greek", "uk" to "Ukrainian",
+        "badini" to "Badini Kurdish"
+    )
+
+    private const val BADINI_API_URL = "https://badini-translator-api.lunium.io/api/translate"
+    private val BADINI_KEYS = listOf(
+        "a70588f35e2aa7094ad1924b9353d4b97ae1da8dd7340e10efe17ed9ffdc54be",
+        "bdn-api-6d5d64b7-3e2f-4332-aa79-5287c0e00ed4-87f38261",
+        "sk-IaWoq3cYNVcT7MQ111e6zX2NTaZyFIwCGXdSu59qK603A6HB",
+    )
+    private val EN_TO_BADINI = mapOf<String, String>(
+        "hello" to "Silav",
+        "hi" to "Silav",
+        "hey" to "Merheba",
+        "good morning" to "Beyanî baş",
+	"moin" to "Merheba",
+	"moin moin" to "Merheba merheba",
+        "good afternoon" to "Roj baş",
+        "good evening" to "Êvar baş",
+        "good night" to "Şev baş",
+        "goodbye" to "Bi xatirî",
+        "bye" to "Bi xatirî",
+        "welcome" to "Bi xêr hatî",
+        "yes" to "Erê",
+        "no" to "Na",
+        "please" to "Ji kerema xwe",
+        "thank you" to "Spas",
+        "thanks" to "Spas",
+        "thank you very much" to "Gelek spas",
+        "you\\'re welcome" to "Ser çavan",
+        "sorry" to "Bibore",
+        "excuse me" to "Biborîne",
+        "i\\'m sorry" to "Ez bibore",
+        "how are you" to "Tu çawa yî",
+        "what is your name" to "Navê te çi ye",
+        "my name is" to "Navê min",
+        "where are you from" to "Tu ji ku derê yî",
+        "where is" to "li ku ye",
+        "how much" to "Çend",
+        "how much is this" to "Ev çend e",
+        "what is this" to "Ev çi ye",
+        "what" to "Çi",
+        "who" to "Kî",
+        "where" to "Li ku",
+        "when" to "Kengî",
+        "why" to "Çima",
+        "how" to "Çawa",
+        "how many" to "Çend",
+        "do you speak english" to "Tu inglîzî dizanî",
+        "i don\\'t understand" to "Ez fêm nakim",
+        "i don\\'t know" to "Ez nizanim",
+        "i don\\'t speak" to "Ez nizanim",
+        "i know" to "Ez dizanim",
+        "what happened" to "Çi bû",
+        "really" to "Bi rastî",
+        "maybe" to "Belkî",
+        "of course" to "Bêguman",
+        "no problem" to "Pirsgirêk nîne",
+        "i want" to "Ez dixwazim",
+        "i need" to "Pêdiviya min bi",
+        "i have" to "Min heye",
+        "i like" to "Ez hez dikim",
+        "i love you" to "Ez te hez dikim",
+        "i love" to "Ez hez dikim",
+        "i miss you" to "Bêriya te kiriye",
+        "i\\'m hungry" to "Ez birçî me",
+        "i\\'m thirsty" to "Ez tî me",
+        "i\\'m tired" to "Ez westiyayî me",
+        "i\\'m sick" to "Ez nexweş im",
+        "i\\'m lost" to "Ez winda bûme",
+        "help me" to "Alîkariya min bike",
+        "help" to "Hawar",
+        "call the police" to "Polîs bang bike",
+        "i need a doctor" to "Doktor lazim e",
+        "i am" to "Ez",
+        "i\\'m fine" to "Ez baş im",
+        "i\\'m good" to "Ez baş im",
+        "i\\'m happy" to "Ez kêfxweş im",
+        "i\\'m sad" to "Ez xemgîn im",
+        "i\\'m busy" to "Ez mijûl im",
+        "left" to "Çep",
+        "right" to "Rast",
+        "straight" to "Rast",
+        "go straight" to "Rast here",
+        "turn left" to "Çep ve",
+        "turn right" to "Rast ve",
+        "stop here" to "Li vir bisekine",
+        "come here" to "Vira were",
+        "come" to "Were",
+        "go" to "Here",
+        "go away" to "Here",
+        "come back" to "Vegere",
+        "sit down" to "Rûne",
+        "stand up" to "Rabe",
+        "wait" to "Bisekine",
+        "wait a moment" to "Demek bisekine",
+        "hurry up" to "Lez ke",
+        "slowly" to "Hêdî",
+        "be careful" to "Hişyar be",
+        "follow me" to "Li pey min",
+        "come with me" to "Were bi min re",
+        "near" to "Nêzîk",
+        "far" to "Dûr",
+        "here" to "Vira",
+        "there" to "Wira",
+        "inside" to "Hundir",
+        "outside" to "Der",
+        "up" to "Jor",
+        "down" to "Jêr",
+        "today" to "Îro",
+        "tomorrow" to "Sibê",
+        "yesterday" to "Duh",
+        "now" to "Niha",
+        "later" to "Paşî",
+        "soon" to "Zû",
+        "never" to "Qet",
+        "always" to "Her tim",
+        "day" to "Roj",
+        "night" to "Şev",
+        "morning" to "Sibê",
+        "afternoon" to "Nîvro",
+        "evening" to "Êvar",
+        "week" to "Hefte",
+        "month" to "Meh",
+        "year" to "Sal",
+        "hour" to "Seet",
+        "minute" to "Xulek",
+        "second" to "Saniye",
+        "time" to "Dem",
+        "before" to "Berî",
+        "after" to "Piştî",
+        "early" to "Zû",
+        "late" to "Dereng",
+        "new" to "Nû",
+        "old" to "Kevin",
+        "young" to "Ciwan",
+        "this" to "Ev",
+        "that" to "Ew",
+        "these" to "Ev",
+        "those" to "Ew",
+        "one" to "Yek",
+        "two" to "Du",
+        "three" to "Sê",
+        "four" to "Çar",
+        "five" to "Pênc",
+        "six" to "Şeş",
+        "seven" to "Heft",
+        "eight" to "Heşt",
+        "nine" to "Neh",
+        "ten" to "Deh",
+        "eleven" to "Yanzdeh",
+        "twelve" to "Duwanzdeh",
+        "thirteen" to "Sêzdeh",
+        "fourteen" to "Çarde",
+        "fifteen" to "Panzdeh",
+        "sixteen" to "Şanzdeh",
+        "seventeen" to "Hivdeh",
+        "eighteen" to "Hejdeh",
+        "nineteen" to "Nozdeh",
+        "twenty" to "Bist",
+        "hundred" to "Sed",
+        "thousand" to "Hezar",
+        "first" to "Yekem",
+        "third" to "Sêyem",
+        "last" to "Dawî",
+        "man" to "Mêr",
+        "woman" to "Jin",
+        "boy" to "Kur",
+        "girl" to "Keç",
+        "child" to "Zarok",
+        "baby" to "Zarokê biçûk",
+        "father" to "Bav",
+        "mother" to "Dayik",
+        "brother" to "Bira",
+        "sister" to "Xwişk",
+        "son" to "Kur",
+        "daughter" to "Keç",
+        "husband" to "Mêr",
+        "wife" to "Jin",
+        "grandfather" to "Bapîr",
+        "grandmother" to "Dapîr",
+        "uncle" to "Mam",
+        "aunt" to "Met",
+        "friend" to "Heval",
+        "family" to "Malbat",
+        "person" to "Mirov",
+        "people" to "Mirov",
+        "name" to "Nav",
+        "neighbor" to "Cîran",
+        "sun" to "Roj",
+        "moon" to "Heyv",
+        "star" to "Stêrk",
+        "sky" to "Esman",
+        "earth" to "Erd",
+        "water" to "Av",
+        "fire" to "Agir",
+        "wind" to "Ba",
+        "rain" to "Baran",
+        "snow" to "Berf",
+        "cloud" to "Ewr",
+        "mountain" to "Çiya",
+        "river" to "Çem",
+        "sea" to "Derya",
+        "tree" to "Dar",
+        "flower" to "Kulîlk",
+        "animal" to "Heywan",
+        "dog" to "Kûçik",
+        "cat" to "Pisîk",
+        "horse" to "Hesp",
+        "cow" to "Çêl",
+        "sheep" to "Mî",
+        "chicken" to "Mirîşk",
+        "bird" to "Çivîk",
+        "fish" to "Masî",
+        "weather" to "Hewa",
+        "hot" to "Germ",
+        "cold" to "Sar",
+        "warm" to "Germ",
+        "cool" to "Hênik",
+        "summer" to "Havîn",
+        "winter" to "Zivistan",
+        "spring" to "Bihar",
+        "autumn" to "Payîz",
+        "food" to "Xwarin",
+        "bread" to "Nan",
+        "milk" to "Şîr",
+        "egg" to "Hêk",
+        "meat" to "Goşt",
+        "rice" to "Birinc",
+        "salt" to "Xwê",
+        "sugar" to "Şekir",
+        "tea" to "Çay",
+        "coffee" to "Qehwe",
+        "apple" to "Sêv",
+        "honey" to "Hingiv",
+        "butter" to "Nîvişk",
+        "oil" to "Rûn",
+        "fruit" to "Fêkî",
+        "vegetable" to "Zebze",
+        "lamb" to "Goştê berx",
+        "house" to "Xanî",
+        "home" to "Mal",
+        "door" to "Derî",
+        "window" to "Pencere",
+        "room" to "Ode",
+        "bed" to "Nivîn",
+        "table" to "Mase",
+        "chair" to "Kursî",
+        "kitchen" to "Mitfax",
+        "bathroom" to "Hemam",
+        "toilet" to "Tuwalet",
+        "car" to "Tirimpêl",
+        "road" to "Rê",
+        "street" to "Kuçe",
+        "city" to "Bajar",
+        "village" to "Gund",
+        "country" to "Welat",
+        "world" to "Cihan",
+        "shop" to "Dikan",
+        "market" to "Bazar",
+        "hospital" to "Nexweşxane",
+        "school" to "Dibistan",
+        "university" to "Zanîngeh",
+        "mosque" to "Mizgeft",
+        "hotel" to "Otêl",
+        "restaurant" to "Xwarinxane",
+        "airport" to "Balafirgeh",
+        "station" to "Îstasyon",
+        "bank" to "Banke",
+        "book" to "Pirtûk",
+        "pen" to "Pênûs",
+        "paper" to "Kaxez",
+        "key" to "Kilît",
+        "money" to "Pere",
+        "phone" to "Telefon",
+        "mobile" to "Telefonê destan",
+        "computer" to "Komputer",
+        "internet" to "Înternet",
+        "clothes" to "Cil",
+        "shoe" to "Pêlav",
+        "hat" to "Kum",
+        "bag" to "Çente",
+        "watch" to "Seet",
+        "umbrella" to "Sîwan",
+        "red" to "Sor",
+        "blue" to "Şîn",
+        "green" to "Kesk",
+        "yellow" to "Zer",
+        "black" to "Reş",
+        "white" to "Spî",
+        "brown" to "Qehweyî",
+        "orange" to "Pirteqalî",
+        "purple" to "Binefşî",
+        "pink" to "Pembe",
+        "gray" to "Gewr",
+        "gold" to "Zêrîn",
+        "silver" to "Zîvîn",
+        "good" to "Baş",
+        "bad" to "Xirab",
+        "big" to "Mezin",
+        "small" to "Biçûk",
+        "long" to "Dirêj",
+        "short" to "Kurt",
+        "tall" to "Dirêj",
+        "beautiful" to "Ciwan",
+        "ugly" to "Kirêt",
+        "rich" to "Zengîn",
+        "poor" to "Feqîr",
+        "happy" to "Kêfxweş",
+        "sad" to "Xemgîn",
+        "fast" to "Zû",
+        "slow" to "Hêdî",
+        "heavy" to "Giran",
+        "light" to "Sivik",
+        "hard" to "Zor",
+        "easy" to "Hêsan",
+        "clean" to "Paqij",
+        "dirty" to "Pîs",
+        "full" to "Tijî",
+        "empty" to "Vala",
+        "open" to "Vekirî",
+        "closed" to "Girtî",
+        "wrong" to "Çewt",
+        "true" to "Rast",
+        "false" to "Şaş",
+        "important" to "Girîng",
+        "free" to "Belaş",
+        "expensive" to "Biha",
+        "cheap" to "Erzan",
+        "same" to "Heman",
+        "different" to "Cuda",
+        "much" to "Pir",
+        "many" to "Pir",
+        "little" to "Hindik",
+        "some" to "Hinek",
+        "all" to "Hemû",
+        "more" to "Zêdetir",
+        "less" to "Kêmtir",
+        "to be" to "bûn",
+        "to have" to "hebûn",
+        "to do" to "kirin",
+        "to go" to "çûn",
+        "to come" to "hatin",
+        "to see" to "dîtin",
+        "to hear" to "bihîstin",
+        "to speak" to "axivîn",
+        "to say" to "gotin",
+        "to tell" to "gotin",
+        "to eat" to "xwarin",
+        "to drink" to "vexwarin",
+        "to sleep" to "nivistin",
+        "to walk" to "meşîn",
+        "to run" to "bezîn",
+        "to work" to "xebitîn",
+        "to read" to "xwendin",
+        "to write" to "nivîsîn",
+        "to learn" to "fêr bûn",
+        "to know" to "zanîn",
+        "to think" to "fikirîn",
+        "to love" to "hez kirin",
+        "to want" to "xwestin",
+        "to give" to "dan",
+        "to take" to "stendin",
+        "to buy" to "kirîn",
+        "to sell" to "firotin",
+        "to find" to "dîtin",
+        "to open" to "vekirin",
+        "to close" to "girtin",
+        "to bring" to "anîn",
+        "to send" to "şandin",
+        "to start" to "dest pê kirin",
+        "to finish" to "qedandin",
+        "to try" to "ceribandin",
+        "to help" to "alîkarî kirin",
+        "to make" to "çêkirin",
+        "to put" to "danîn",
+        "to leave" to "berdan",
+        "to stay" to "man",
+        "to play" to "lîstin",
+        "to sing" to "stran gotin",
+        "to dance" to "govend kirin",
+        "to sit" to "rûniştin",
+        "to stand" to "rabûn",
+        "to cook" to "çêlêxistin",
+        "to clean" to "paqij kirin",
+        "to wash" to "şûştin",
+        "to cut" to "birîn",
+        "to change" to "guherandin",
+        "to remember" to "bîr anîn",
+        "to forget" to "ji bîr kirin",
+        "to wait" to "rawestîn",
+        "to ask" to "pirsîn",
+        "to answer" to "bersiv dan",
+        "to show" to "nîşan dan",
+        "to call" to "bang kirin",
+        "to need" to "pêdivî bûn",
+        "to live" to "jiyan",
+        "to die" to "mirin",
+        "to feel" to "hest kirin",
+        "to keep" to "hiştin",
+        "to let" to "hiştin",
+        "to begin" to "dest pê kirin",
+        "to continue" to "berdewam kirin",
+        "to stop" to "sekinîn",
+        "monday" to "Duşem",
+        "tuesday" to "Sêşem",
+        "wednesday" to "Çarşem",
+        "thursday" to "Pêncşem",
+        "friday" to "Înî",
+        "saturday" to "Şemî",
+        "sunday" to "Yekşem",
+        "january" to "Çile",
+        "february" to "Sibat",
+        "march" to "Adar",
+        "april" to "Nîsan",
+        "may" to "Gulan",
+        "june" to "Hezîran",
+        "july" to "Tîrmeh",
+        "august" to "Tebax",
+        "september" to "Îlon",
+        "october" to "Cotmeh",
+        "november" to "Mijdar",
+        "december" to "Kanûn",
+        "i\\'m fine thank you" to "Ez baş im spas",
+        "fine thank you" to "Baş im spas",
+        "nice to meet you" to "Ez kêfxweş im",
+        "pleased to meet you" to "Ez kêfxweş im",
+        "see you later" to "Paşî hevdu dibînin",
+        "see you tomorrow" to "Hevdu sibê",
+        "long time no see" to "Zû hevdu nedîtiye",
+        "take care" to "Xwe baş miqate be",
+        "have a nice day" to "Rojek baş",
+        "good luck" to "Şans baş",
+        "congratulations" to "Pîroz be",
+        "happy birthday" to "Rojbûna te pîroz be",
+        "happy new year" to "Sersala te pîroz be",
+        "good idea" to "Ramana baş",
+        "i think so" to "Ez wisa difikirim",
+        "i don\\'t think so" to "Ez wisa nafikirim",
+        "i hope so" to "Ez hêvî dikim",
+        "i agree" to "Ez dipejirînim",
+        "i am ready" to "Ez amade me",
+        "i am sorry" to "Ez bibore",
+        "it doesn\\'t matter" to "Ne girîng e",
+        "it\\'s important" to "Girîng e",
+        "it\\'s urgent" to "Acîl e",
+        "it\\'s okay" to "Baş e",
+        "that\\'s good" to "Ew baş e",
+        "that\\'s bad" to "Ew xirab e",
+        "let\\'s go" to "Ka em herin",
+        "show me" to "Nîşanî min bide",
+        "give me" to "Bide min",
+        "leave me alone" to "Min bi tenê bihêle",
+        "i am looking for" to "Ez li digerim",
+        "do you have" to "Te heye",
+        "how old are you" to "Tu çend salî yî",
+        "where do you live" to "Tu li ku dijî",
+        "i live in" to "Ez li dimînim",
+        "i am coming from" to "Ez ji têm",
+        "i am going to" to "Ez diçim",
+        "can you help me" to "Tu dikarî alîkariya min bikî",
+        "is it far" to "Dûr e",
+        "is it near" to "Nêzîk e",
+        "stop" to "Bisekine",
+        "enough" to "Bes",
+        "too much" to "Pir zêde",
+        "wait for me" to "Li min bisekine",
+        "i will come" to "Ez têm",
+        "i will go" to "Ez diçim",
+        "with me" to "Bi min re",
+        "with you" to "Bi te re",
+        "without me" to "Bê min",
+        "for me" to "Ji bo min",
+        "for you" to "Ji bo te",
+        "my home" to "Mala min",
+        "your home" to "Mala te",
+        "my friend" to "Hevalê min",
+        "your friend" to "Hevalê te",
+        "good person" to "Mirovê baş",
+        "bad person" to "Mirovê xirab",
+        "good day" to "Roj baş",
+        "god willing" to "Bi xwedê",
+        "inshallah" to "Bi xwedê",
+        "bless you" to "Her bijî",
+        "cheers" to "Her bijî",
+        "many thanks" to "Gelek spas",
+        "big thanks" to "Spasên mezin",
+        "you are welcome" to "Ser çavan",
+        "and" to "Û",
+        "or" to "Yan",
+        "but" to "Lê",
+        "if" to "Eger",
+        "with" to "Bi",
+        "without" to "Bê",
+        "for" to "Ji bo",
+        "from" to "Ji",
+        "to" to "Bo",
+        "in" to "Di",
+        "on" to "Li ser",
+        "under" to "Di bin",
+        "very" to "Pir",
+        "sometimes" to "Carna",
+        "also" to "Jî",
+        "too" to "Jî",
+        "only" to "Tenê",
+        "just" to "Tenê",
+        "still" to "Hê",
+        "already" to "Hê",
+        "again" to "Dîsa",
+        "well" to "Baş",
+        "better" to "Baştir",
+        "best" to "Baştirîn",
+        "worst" to "Xirabtirîn",
+        "nothing" to "Tiştek",
+        "something" to "Tiştek",
+        "everything" to "Her tişt",
+        "everyone" to "Her kes",
+        "nobody" to "Tu kes",
+        "somebody" to "Hin kes",
+        "anyone" to "Her kes",
+        "anything" to "Her tişt",
+        "myself" to "Ez bi xwe",
+        "yourself" to "Tu bi xwe",
+        "together" to "Bi hev re",
+        "alone" to "Bi tenê",
+        "probably" to "Ihtimal e",
+        "seriously" to "Bi ciddî",
+        "definitely" to "Bêguman",
+        "hopefully" to "Hêvîdarim",
+        "a lot" to "Gelek",
+        "a little" to "Hindik",
+        "a bit" to "Hindik",
+        "so much" to "Pir zêde",
+        "so many" to "Pir zêde",
+        "how long" to "Çiqas dirêj",
+        "how far" to "Çiqas dûr",
+        "i am here" to "Ez li vira me",
+        "are you here" to "Tu li vira yî",
+        "he is here" to "Ew li vira ye",
+        "she is here" to "Ew li vira ye",
+        "we are here" to "Em li vira ne",
+        "they are here" to "Ew li vira ne",
+        "i am not here" to "Ez ne li vira me",
+        "there is" to "Heye",
+        "there are" to "Hene",
+        "there is no" to "Tune",
+        "you have" to "Te heye",
+        "he has" to "Wî heye",
+        "she has" to "Wê heye",
+        "we have" to "Me heye",
+        "they have" to "Wan heye",
+        "i don\\'t have" to "Min tune",
+        "i can" to "Ez dikarim",
+        "you can" to "Tu dikarî",
+        "i cannot" to "Ez nikarim",
+        "you cannot" to "Tu nikarî",
+        "i must" to "Divê ez",
+        "you must" to "Divê tu",
+        "i should" to "Divê ez",
+        "i would like" to "Ez dixwazim",
+        "would you like" to "Tu dixwazî",
+        "let me" to "Bihêle ez",
+        "allow me" to "Destûrê bidin min",
+    )
+
+    /** Reverse map: Badini -> English */
+    private val BADINI_TO_EN: Map<String, String> by lazy {
+        EN_TO_BADINI.entries.associate { (k, v) -> v.lowercase() to k }
+    }
+    data class TranslationResult(
+        val translatedText: String,
+        val alternateScriptText: String = "",
+        val engine: String = ""
+    )
+
+    data class OcrResult(
+        val extractedText: String,
+        val translatedText: String,
+        val alternateScriptText: String = "",
+        val engine: String = ""
+    )
+
+    // ============================================================
+    //  MAIN TRANSLATE FUNCTION
+    // ============================================================
+
+    suspend fun translate(text: String, from: String, to: String): TranslationResult {
+        if (text.isBlank()) return TranslationResult("")
+
+        _lastTranslationErrors.clear()
+
+        // 1) Try offline dictionary first (always works)
+        val dictResult = translateOffline(text, from, to)
+        if (dictResult != null) return dictResult
+
+
+        // 2) If Badini is involved, try Badini API first
+        if (to == "badini" || from == "badini") {
+            try {
+                return translateWithBadiniAPI(text, from, to)
+            } catch (e: Exception) {
+                _lastTranslationErrors.add("Badini-API: ${e.message}")
+                android.util.Log.w("Badini", "Badini API: ${e.message}")
+            }
+
+            try {
+                return translateWithGemini(text, from, to)
+            } catch (e: Exception) {
+                _lastTranslationErrors.add("Gemini: ${e.message}")
+                android.util.Log.w("Badini", "Gemini: ${e.message}")
+            }
+        } else {
+            try {
+                return translateWithGemini(text, from, to)
+            } catch (e: Exception) {
+                _lastTranslationErrors.add("Gemini: ${e.message}")
+                android.util.Log.w("Badini", "Gemini: ${e.message}")
+            }
+        }
+
+        // 5) Try MyMemory (funktioniert ohne API-Key für die meisten Sprachen)
+        try {
+            return translateWithMyMemory(text, from, to)
+        } catch (e: Exception) {
+            _lastTranslationErrors.add("MyMemory: ${e.message}")
+            android.util.Log.w("Badini", "MyMemory: ${e.message}")
+        }
+
+
+
+        val errorDetails = _lastTranslationErrors.joinToString("\n• ")
+        android.util.Log.w("Badini", "All translators failed:\n$errorDetails")
+        return TranslationResult(
+            "Übersetzung fehlgeschlagen.\n\n" +
+            "Mögliche Ursachen:\n" +
+            "• Badini-API: Tageslimit erreicht (0:00 Uhr geht's wieder)\n" +
+            "• Gemini-API: Standard-Schlüssel aufgebraucht\n" +
+            "• MyMemory: temporär nicht erreichbar\n\n" +
+            "➡️ In den Einstellungen (⚙️) kannst du einen eigenen\n" +
+            "   Gemini-API-Key hinterlegen (kostenlos auf\n" +
+            "   https://aistudio.google.com/app/apikey)",
+            engine = "Fehler"
+        )
+    }
+
+    // ============================================================
+    //  OFFLINE DICTIONARY – 800+ words & phrases
+    // ============================================================
+
+    /**
+     * Offline Kurdish-Badini ↔ English dictionary.
+     * Returns the translated text if found, or null to fall through to online APIs.
+     */
+    private fun translateOffline(text: String, from: String, to: String): TranslationResult? {
+        val cleaned = text.trim().lowercase().replace(Regex("""[.!?,\s]+$"""), "")
+        if (cleaned.isBlank()) return null
+
+        // We support: en→badini and badini→en
+        if (from == "badini" && to == "en") {
+            val result = BADINI_TO_EN[cleaned]
+            if (result != null) return TranslationResult(result, engine = "Wörterbuch")
+            // check if it contains known words
+            val words = cleaned.split(Regex("\\s+"))
+            if (words.size <= 4) {
+                val translated = words.map { BADINI_TO_EN[it] ?: it }.joinToString(" ")
+                if (translated != cleaned) return TranslationResult(translated, engine = "Wörterbuch")
+            }
+        }
+        if (from == "en" && to == "badini") {
+            val result = EN_TO_BADINI[cleaned]
+            if (result != null) return TranslationResult(result, engine = "Wörterbuch")
+            val words = cleaned.split(Regex("\\s+"))
+            if (words.size <= 4) {
+                val translated = words.map { EN_TO_BADINI[it] ?: it }.joinToString(" ")
+                if (translated != cleaned) return TranslationResult(translated, engine = "Wörterbuch")
+            }
+        }
+        // Badini → any other language → try English as pivot
+        if (from == "badini" && to != "en" && to != "badini") {
+            val enResult = BADINI_TO_EN[cleaned]
+            if (enResult != null) return TranslationResult("[$enResult] (Badini→${languageNames[to] ?: to} offline)", engine = "Wörterbuch")
+        }
+        return null
+    }
+
+    // ============================================================
+    //  BADINI API
+    // ============================================================
+
+    private suspend fun translateWithBadiniAPI(text: String, from: String, to: String): TranslationResult {
+        return withContext(Dispatchers.IO) {
+            // Build list of available Badini API keys
+            val allBadiniKeys = mutableListOf<String>()
+            userBadiniKey?.let { if (it.isNotBlank()) allBadiniKeys.add(it) }
+            allBadiniKeys.addAll(BADINI_KEYS)
+
+            // Try via website proxy first - needs x-api-key header!
+            try {
+                val proxyBase = if (proxyUrl.endsWith("/")) proxyUrl.dropLast(1) else proxyUrl
+                val url = URL("$proxyBase/api/proxy")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                // The Vercel proxy requires x-api-key header to forward the request
+                if (allBadiniKeys.isNotEmpty()) {
+                    conn.setRequestProperty("x-api-key", allBadiniKeys[0])
+                }
+                conn.doOutput = true
+                conn.connectTimeout = 8000
+                conn.readTimeout = 15000
+
+                val jsonBody = """{"text":"${escapedJson(text)}","languageFrom":"$from","languageTo":"$to"}"""
+                OutputStreamWriter(conn.outputStream).use { it.write(jsonBody) }
+
+                if (conn.responseCode == 200) {
+                    val response = conn.inputStream.bufferedReader().readText()
+                    val translated = extractNestedTranslated(response)
+                    var alt = extractJsonValue(response, "alternateScriptText") ?: ""
+                    if (translated != null) {
+                        return@withContext TranslationResult(translated, alt, "Badini-Proxy")
+                    }
+                }
+                conn.disconnect()
+            } catch (e: Exception) { android.util.Log.w("Badini", "Proxy: ${e.message}") }
+
+            // Fall back to direct Badini API with remaining keys
+            for (key in allBadiniKeys.drop(1)) { // skip first key (already used by proxy)
+                try {
+                    val url = URL(BADINI_API_URL)
+                    val conn = url.openConnection() as HttpURLConnection
+                    conn.requestMethod = "POST"
+                    conn.setRequestProperty("Content-Type", "application/json")
+                    conn.setRequestProperty("x-api-key", key)
+                    conn.setRequestProperty("Origin", "https://badini.app")
+                    conn.doOutput = true
+                    conn.connectTimeout = 5000
+                    conn.readTimeout = 8000
+
+                    val jsonBody = """{"text":"${escapedJson(text)}","languageFrom":"$from","languageTo":"$to"}"""
+                    OutputStreamWriter(conn.outputStream).use { it.write(jsonBody) }
+
+                    if (conn.responseCode == 200) {
+                        val response = conn.inputStream.bufferedReader().readText()
+                        val translated = extractNestedTranslated(response)
+                        val alt = extractJsonValue(response, "alternateScriptText") ?: ""
+                        if (translated != null) {
+                            return@withContext TranslationResult(translated, alt, "Badini-API")
+                        }
+                    } else if (conn.responseCode == 429) {
+                        conn.disconnect()
+                        Thread.sleep(500)
+                        continue
+                    }
+                    conn.disconnect()
+                } catch (e: Exception) {
+                    if (e.message?.contains("429") == true || e.message?.contains("Too Many Requests") == true) {
+                        Thread.sleep(500)
+                    }
+                    continue
+                }
+            }
+            throw Exception("Badini API fehlgeschlagen")
+        }
+    }
+    // ============================================================
+
+    private suspend fun translateWithGemini(text: String, from: String, to: String): TranslationResult {
+        return withContext(Dispatchers.IO) {
+            val fromName = languageNames[from] ?: from
+            val toName = languageNames[to] ?: to
+
+            val prompt = """You are a professional translator. Translate the following text from $fromName to $toName.
+
+Rules:
+- Return ONLY the translated text, nothing else.
+- Do NOT add any explanations, notes, or commentary.
+- Preserve the original formatting and line breaks.
+- If $toName uses a different script (e.g. Arabic script for Badini Kurdish), use that script.
+- IMPORTANT: If translating TO Badini Kurdish, ALSO provide the Latin (Roman) script version.
+  Format your response EXACTLY like this:
+  [ARABIC_SCRIPT]
+  [LATIN_SCRIPT]
+  The first line is the Arabic script (Badini), the second line is the Latin script version.
+  If NOT translating to Badini, just return the translation as normal.
+
+Text to translate:
+$text"""
+
+            for (key in allGeminiKeys) {
+                try {
+                    val result = callGeminiAPI(key, prompt)
+                    if (result != null) return@withContext result
+                } catch (e: Exception) {
+                    if (e.message?.contains("429") == true || e.message?.contains("Too Many Requests") == true) {
+                        Thread.sleep(300)
+                        continue
+                    }
+                }
+            }
+            throw Exception("Alle Gemini-Keys fehlgeschlagen")
+        }
+    }
+
+    private fun callGeminiAPI(apiKey: String, prompt: String): TranslationResult? {
+        val models = listOf("gemini-2.0-flash", "gemini-1.5-flash")
+        for (model in models) {
+            try {
+                val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+
+                val jsonBody = """{
+                    "contents": [{"parts": [{"text": ${jsonString(prompt)}}]}],
+                    "generationConfig": {"temperature": 0.1, "maxOutputTokens": 8192}
+                }"""
+                OutputStreamWriter(conn.outputStream).use { it.write(jsonBody) }
+
+                if (conn.responseCode == 200) {
+                    val response = conn.inputStream.bufferedReader().readText()
+                    val result = extractGeminiText(response)
+                    if (result != null) return result
+                } else if (conn.responseCode == 429) {
+                    conn.disconnect()
+                    throw Exception("429 Too Many Requests for key")
+                }
+                conn.disconnect()
+            } catch (e: Exception) {
+                if (e.message?.contains("429") == true || e.message?.contains("Too Many Requests") == true) {
+                    throw e
+                }
+                continue
+            }
+        }
+        return null
+    }
+
+    // ============================================================
+// ============================================================
+
+    private suspend fun translateWithMyMemory(text: String, from: String, to: String): TranslationResult {
+        return withContext(Dispatchers.IO) {
+            try {
+                val lf = normalizeLangCode(from)
+                val lt = normalizeLangCode(to)
+                val q = java.net.URLEncoder.encode(text, "UTF-8")
+                val url = URL("https://api.mymemory.translated.net/get?q=$q&langpair=$lf|$lt&de=demo@example.com")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+
+                if (conn.responseCode == 200) {
+                    val resp = conn.inputStream.bufferedReader().readText()
+                    // parse {"responseData":{"translatedText":"...","match":1.0}}
+                    val regex = """"translatedText"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex()
+                    val match = regex.find(resp)
+                    if (match != null) {
+                        val translated = match.groupValues[1]
+                            .replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")
+                        return@withContext TranslationResult(translated, "", "MyMemory")
+                    }
+                }
+                conn.disconnect()
+            } catch (e: Exception) { /* fall through */ }
+            throw Exception("MyMemory fehlgeschlagen")
+        }
+    }
+
+    // ============================================================
+    //  IMAGE OCR + TRANSLATION
+    // ============================================================
+
+    suspend fun translateImage(bitmap: Bitmap, from: String, to: String): OcrResult {
+        return withContext(Dispatchers.IO) {
+            val stream = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+            val imageBytes = stream.toByteArray()
+            val base64 = android.util.Base64.encodeToString(imageBytes, android.util.Base64.NO_WRAP)
+
+            val fromName = languageNames[from] ?: from
+            val toName = languageNames[to] ?: to
+            val prompt = "Extract all text from this image. Then translate the extracted text from $fromName to $toName. " +
+                "Format your response as\nEXTRACTED: [extracted text]\nTRANSLATED: [translated text]"
+
+            var lastError: String? = null
+
+            // 1) Try Gemini-Vision first
+            for (key in allGeminiKeys) {
+                try {
+                    val url = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$key")
+                    val conn = url.openConnection() as HttpURLConnection
+                    conn.requestMethod = "POST"
+                    conn.setRequestProperty("Content-Type", "application/json")
+                    conn.doOutput = true
+                    conn.connectTimeout = 3000
+                    conn.readTimeout = 8000
+
+                    val jsonBody = "{" +
+                            "\"contents\":[{" +
+                            "\"parts\":[" +
+                            "{\"text\":" + jsonString(prompt) + "}," +
+                            "{\"inline_data\":{\"mime_type\":\"image/jpeg\",\"data\":\"" + base64 + "\"}}" +
+                            "]}" +
+                            "]," +
+                            "\"generationConfig\":{\"temperature\":0.1,\"maxOutputTokens\":8192}" +
+                            "}"
+                    OutputStreamWriter(conn.outputStream).use { it.write(jsonBody) }
+
+                    val code = conn.responseCode
+                    if (code == 200) {
+                        val response = conn.inputStream.bufferedReader().readText()
+                        val geminiResult = extractGeminiText(response)
+                        conn.disconnect()
+
+                        if (geminiResult != null) {
+                            val fullText = geminiResult.translatedText
+                            val extracted = extractField(fullText, "EXTRACTED")
+                            val translated = extractField(fullText, "TRANSLATED")
+                            return@withContext OcrResult(
+                                extractedText = extracted ?: fullText,
+                                translatedText = translated ?: fullText,
+                                alternateScriptText = geminiResult.alternateScriptText,
+                                engine = "Gemini-Vision"
+                            )
+                        }
+                    }
+                    conn.disconnect()
+                } catch (e: Exception) { lastError = e.message; continue }
+            }
+
+            // 2) Try free OCR.space API as fallback
+            try {
+                val body = "apikey=helloworld&base64Image=" +
+                    java.net.URLEncoder.encode("data:image/jpeg;base64," + base64, "UTF-8") +
+                    "&language=eng&OCREngine=2"
+                val ocrUrl = URL("https://api.ocr.space/parse/image")
+                val ocrConn = ocrUrl.openConnection() as HttpURLConnection
+                ocrConn.requestMethod = "POST"
+                ocrConn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+                ocrConn.doOutput = true
+                ocrConn.connectTimeout = 30000
+                ocrConn.readTimeout = 60000
+
+                OutputStreamWriter(ocrConn.outputStream).use { writer -> writer.write(body as String) }
+
+                if (ocrConn.responseCode == 200) {
+                    val ocrResponse = ocrConn.inputStream.bufferedReader().readText()
+                    ocrConn.disconnect()
+
+                    // Parse OCR.space response using extractJsonValue
+                    val extractedText = extractJsonValue(ocrResponse, "ParsedText")
+                    if (extractedText != null && extractedText.isNotBlank()) {
+                        val translationResult = if (from != to) {
+                            try { translate(extractedText, from, to) }
+                            catch (e: Exception) { TranslationResult(extractedText) }
+                        } else {
+                            TranslationResult(extractedText)
+                        }
+                        return@withContext OcrResult(
+                            extractedText = extractedText,
+                            translatedText = translationResult.translatedText,
+                            engine = "OCR.space + " + (translationResult.engine.ifEmpty { "Worterbuch" })
+                        )
+                    }
+                } else {
+                    ocrConn.disconnect()
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("Badini", "OCR.space: ${e.message}")
+            }
+
+            OcrResult("", "OCR fehlgeschlagen.\nBitte Internetverbindung prüfen.")
+        }
+    }
+
+    // ============================================================
+    //  FILE READING
+    // ============================================================
+
+    suspend fun readTextFromUri(uri: Uri, contentResolver: ContentResolver): String {
+        return withContext(Dispatchers.IO) {
+            try {
+                val inputStream = contentResolver.openInputStream(uri)
+                    ?: return@withContext ""
+                inputStream.bufferedReader().use { it.readText() }
+            } catch (e: Exception) {
+                android.util.Log.w("Badini", "readTextFromUri: ${e.message}")
+                ""
+            }
+        }
+    }
+
+    // ============================================================
+    //  HELPERS
+    // ============================================================
+
+    private fun normalizeLangCode(code: String): String {
+        return when (code) {
+            "badini" -> "ku"  // Kurdish
+            else -> code
+        }
+    }
+
+    private fun extractField(text: String, field: String): String? {
+        val regex = Regex("""$field:\s*(.+?)(?:\n|$)""")
+        return regex.find(text)?.groupValues?.get(1)?.trim()
+    }
+
+    private fun extractGeminiText(json: String): TranslationResult? {
+        try {
+            val regex = """"text"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex()
+            val matches = regex.findAll(json).toList()
+            if (matches.isNotEmpty()) {
+                val last = matches.last().groupValues[1]
+                val raw = last.replace("\\n", "\n").replace("\\\"", "\"")?.replace("\\\\", "\\")
+                // Check for dual-script format (Arabic + Latin)
+                val lines = (raw ?: "").trim().split("\n")
+                if (lines.size >= 2 && lines[1].trim().isNotEmpty()) {
+                    return TranslationResult(lines[0].trim(), lines[1].trim(), "Gemini")
+                }
+                return TranslationResult((raw ?: "").trim(), "", "Gemini")
+            }
+            return null
+        } catch (e: Exception) { return null }
+    }
+
+    private fun extractJsonValue(json: String, key: String): String? {
+        val regex = Regex("""""$key\":\s*"((?:[^"\\]|\\.)*)"""")
+        return regex.find(json)?.groupValues?.get(1)
+            ?.replace("\\n", "\n")?.replace("\\\"", "\"")?.replace("\\\\", "\\")
+    }
+
+    private fun extractJsonValueRaw(json: String, key: String): String? {
+        val pattern = """""$key":\s*\{((?:[^{}]|(?:\{[^{}]*\}))*)\}"""
+        val regex = Regex(pattern)
+        val match = regex.find(json)
+        return match?.groupValues?.get(1)?.trim()
+    }
+
+    private fun extractNestedTranslated(json: String): String? {
+        val regex = Regex("""""translatedText":\s*"((?:[^"\\]|\\.)*)"""")
+        return regex.find(json)?.groupValues?.get(1)
+            ?.replace("\\n", "\n")?.replace("\\\"", "\"")?.replace("\\\\", "\\")
+    }
+
+    private fun jsonString(s: String): String {
+        return "\"" + s.replace("\\", "\\\\")
+            .replace("\"", "\\\"").replace("\n", "\\n")
+            .replace("\r", "\\r").replace("\t", "\\t") + "\""
+    }
+
+    private fun escapedJson(s: String): String {
+        return s.replace("\\", "\\\\")
+            .replace("\"", "\\\"").replace("\n", "\\n")
+            .replace("\r", "\\r").replace("\t", "\\t")
+    }
+
+    // ============================================================
+    //  LANGUAGE DETECTION
+    // ============================================================
+
+    fun detectLanguage(text: String): String {
+        if (text.isBlank()) return "en"
+        val t = text.trim()
+
+        var arabicChars = 0
+        var latinChars = 0
+        var cjkChars = 0
+        var totalLetters = 0
+
+        for (c in t) {
+            if (c in '\u0600'..'\u06FF' || c in '\u0750'..'\u077F' || c in '\u08A0'..'\u08FF' || c in '\uFB50'..'\uFDFF' || c in '\uFE70'..'\uFEFF') arabicChars++
+            else if (c in '\u4E00'..'\u9FFF' || c in '\u3400'..'\u4DBF' || c in '\uF900'..'\uFAFF') cjkChars++
+            else if (c.isLetter()) latinChars++
+            if (c.isLetter()) totalLetters++
+        }
+
+        if (totalLetters == 0) return "en"
+
+        val arabicRatio = arabicChars.toFloat() / totalLetters
+        val latinRatio = latinChars.toFloat() / totalLetters
+
+        // Arabic script block
+        if (arabicRatio > 0.3f) {
+            val lower = t.lowercase()
+            val badiniWords = listOf(
+                "ez", "tu", "ew", "em", "h\u00fbn", "awa", "bi x\u00ear", "spas",
+                "\u00e7awa", "ba\u015f", "ne", "er\u00ea", "na", "min", "te", "w\u00ee", "w\u00ea",
+                "me", "we", "wan", "hatin", "\u00e7\u00fbn", "kirin", "gotin", "d\u00eeytin",
+                "xwarin", "vexwarin", "dan", "stendin", "zan\u00een", "xwastin",
+                "kar\u00een", "div\u00ea", "heye", "tune", "li", "ji", "bi", "di", "ser",
+                "bin", "nav", "der", "re", "b\u00fbn", "bike", "dike", "kiriye",
+                "d\u00ea", "\u00ea", "dikin", "dike", "nakim", "nake", "bikin", "nekir"
+            )
+            var badiniScore = 0
+            for (w in badiniWords) {
+                if (lower.contains(w)) badiniScore++
+            }
+
+            val arabicWords = listOf(
+                "\u0627\u0644\u0630\u064a", "\u0647\u0630\u0627", "\u062a\u0644\u0643",
+                "\u0643\u0627\u0646", "\u0633\u0648\u0641", "\u0647\u0644", "\u0644\u0645",
+                "\u0639\u0644\u0649", "\u0625\u0644\u0649", "\u0645\u0646", "\u0641\u064a",
+                "\u0623\u0646\u0627", "\u0646\u062d\u0646", "\u0647\u0648", "\u0647\u064a"
+            )
+            var arabicScore = 0
+            for (w in arabicWords) {
+                if (lower.contains(w)) arabicScore++
+            }
+
+            var persianChars = 0
+            for (c in t) {
+                if (c == '\u06AF' || c == '\u0686' || c == '\u067E' || c == '\u0698') persianChars++
+            }
+
+            return when {
+                persianChars > 0 -> "fa"
+                badiniScore > arabicScore && badiniScore >= 2 -> "badini"
+                arabicScore > badiniScore -> "ar"
+                else -> "badini"
+            }
+        }
+
+        // CJK
+        if (cjkChars > totalLetters * 0.3f) {
+            var japaneseChars = 0
+            var koreanChars = 0
+            for (c in t) {
+                when {
+                    c in '\u3040'..'\u309F' || c in '\u30A0'..'\u30FF' -> japaneseChars++
+                    c in '\uAC00'..'\uD7AF' -> koreanChars++
+                }
+            }
+            return when {
+                koreanChars > totalLetters * 0.3f -> "ko"
+                japaneseChars > 0 -> "ja"
+                else -> "zh"
+            }
+        }
+
+        // Cyrillic
+        var cyrCount = 0
+        var letCount = 0
+        for (ch in t) {
+            if (ch in '\u0400'..'\u04FF' || ch in '\u0500'..'\u052F') cyrCount++
+            if (ch.isLetter()) letCount++
+        }
+        if (letCount > 0 && cyrCount.toFloat() / letCount > 0.3f) return "ru"
+
+        // Latin script language detection
+        val lower = t.lowercase()
+
+        // Turkish specific chars
+        for (c in t) {
+            if (c == '\u015F' || c == '\u0131' || c == '\u011F' || c == '\u00FC' || c == '\u00F6' || c == '\u00E7' ||
+                c == '\u015E' || c == '\u0130' || c == '\u011E' || c == '\u00DC' || c == '\u00D6' || c == '\u00C7') return "tr"
+        }
+        // Swedish chars
+        for (c in t) {
+            if (c == '\u00E5' || c == '\u00E4' || c == '\u00F6' || c == '\u00C5' || c == '\u00C4' || c == '\u00D6') return "sv"
+        }
+
+        val germanWords = listOf("der ", "die ", "das ", "ist ", "sind ", "nicht ", "und ", "mit ", "auf ", "ein ", "eine ", "f\u00fcr ", "ich ", "du ", "wir ", "sie ")
+        var germanScore = 0
+        for (w in germanWords) { if (lower.contains(w)) germanScore++ }
+        val frenchWords = listOf("je ", "tu ", "il ", "elle ", "nous ", "vous ", "ils ", "elles ", "le ", "la ", "les ", "un ", "une ", "des ", "est ", "sont ", "pas ", "avec ")
+        var frenchScore = 0
+        for (w in frenchWords) { if (lower.contains(w)) frenchScore++ }
+        val spanishWords = listOf("el ", "la ", "los ", "las ", "un ", "una ", "es ", "son ", "y ", "o ", "pero ", "con ", "por ", "para ")
+        var spanishScore = 0
+        for (w in spanishWords) { if (lower.contains(w)) spanishScore++ }
+        val italianWords = listOf("il ", "la ", "le ", "gli ", "un ", "una ", "\u00e8 ", "sono ", "e ", "ma ", "con ", "per ", "che ")
+        var italianScore = 0
+        for (w in italianWords) { if (lower.contains(w)) italianScore++ }
+        val dutchWords = listOf("de ", "het ", "een ", "is ", "zijn ", "niet ", "en ", "met ", "op ", "ik ", "je ", "we ", "ze ")
+        var dutchScore = 0
+        for (w in dutchWords) { if (lower.contains(w)) dutchScore++ }
+
+        val scores = listOf(
+            "de" to germanScore, "fr" to frenchScore, "es" to spanishScore,
+            "it" to italianScore, "nl" to dutchScore
+        ).filter { it.second > 0 }
+
+        if (scores.isNotEmpty()) return scores.maxByOrNull { it.second }!!.first
+
+        return "en"
+    }
+
+
+}

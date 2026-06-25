@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#c17f47</color>
+    <color name="primary_dark">#a86a38</color>
+    <color name="progress_color">#c17f47</color>
+    <color name="tab_selected_bg">#f5ede6</color>
+    <string name="app_name">Badini Translate</string>
+    <style name="Theme.BadiniTranslate" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:statusBarColor">#ED1C24</item>
+        <item name="android:windowBackground">#FFFFFF</item>
+    </style>
+    <style name="ToolbarTitle" parent="TextAppearance.Widget.AppCompat.Toolbar.Title">
+        <item name="android:textSize">18sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+</resources>
