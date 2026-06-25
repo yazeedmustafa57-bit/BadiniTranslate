@@ -7,8 +7,8 @@ local.properties
 *.apk
 *.aab
 *.idsig
-*.keystore
 *.bak
 .kotlin/
 build_manual/
 /tmp/
+.DS_Store
