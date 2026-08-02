@@ -12,3 +12,8 @@ local.properties
 build_manual/
 /tmp/
 .DS_Store
+
+# Schlüssel und Passwörter – NIE ins Repo laden!
+*.keystore
+*.jks
+keystore.properties
